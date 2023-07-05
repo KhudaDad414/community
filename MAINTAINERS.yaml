@@ -42,6 +42,7 @@
   isTscMember: true
   repos:
     - cupid
+    - ffff
 - name: Cameron Rushton
   github: CameronRushton
   slack: U01DVKKAV5K
