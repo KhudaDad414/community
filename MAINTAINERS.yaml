@@ -51,13 +51,14 @@
   repos:
     - java-spring-cloud-stream-template
     - python-paho-template
+    - bindings
 - name: Dale Lane
   github: dalelane
   linkedin: dalelane
   slack: U01EYAFR5BR
   twitter: dalelane
   availableForHire: false
-  isTscMember: true
+  isTscMember: false
   company: IBM
   repos:
     - avro-schema-parser
