@@ -51,7 +51,6 @@
   repos:
     - java-spring-cloud-stream-template
     - python-paho-template
-    - bindings
 - name: Dale Lane
   github: dalelane
   linkedin: dalelane
