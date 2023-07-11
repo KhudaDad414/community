@@ -8,6 +8,7 @@
   isTscMember: true
   repos:
     - diff
+    - fail
 - name: Abir Pal
   linkedin: imabp
   slack: U01S8EQ9LQ2
