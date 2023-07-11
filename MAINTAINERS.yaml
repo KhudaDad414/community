@@ -63,6 +63,7 @@
   repos:
     - avro-schema-parser
     - bindings
+    - fail
     - java-template
 - name: Emiliano Zublena
   github: emilianozublena
