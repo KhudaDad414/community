@@ -1,0 +1,216 @@
+name: Welcome New Contributor
+
+on:
+  pull_request:
+    types: [closed]
+    paths: 
+      - 'MAINTAINERS.yaml'
+env:
+  GH_TOKEN: ${{ secrets.GH_TOKEN }}
+
+jobs:
+  detect_maintainer_changes:
+    if: github.event.pull_request.merged 
+    runs-on: ubuntu-latest
+    steps: 
+      - name: Checkout main branch 
+        uses: actions/checkout@v3
+        with:
+          ref: master
+          path: community-main
+      - name: List of directory
+        run: ls -la
+      - name: Checkout one commit before last one
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 2
+          ref: master
+          path: community
+      - name: List of directory 
+        run: ls -la
+      - run: cd community && git checkout HEAD^
+      - name: Install dependencies
+        run: npm install js-yaml@4.1.0
+      - name: Compare files
+        id: compare-files
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require("fs");
+            const yaml = require('js-yaml');
+
+            const currentMaintainers = yaml.load(fs.readFileSync('./community-main/MAINTAINERS.yaml', 'utf8'));
+            const previousMaintainers = yaml.load(fs.readFileSync('./community/MAINTAINERS.yaml', 'utf8'));
+
+            const removed = previousMaintainers.filter(
+              (newObj) => !currentMaintainers.some((oldObj) => oldObj.github === newObj.github)
+            );
+            const added = currentMaintainers.filter(
+              (oldObj) => !previousMaintainers.some((newObj) => newObj.github === oldObj.github)
+            );
+
+            if(added.length > 0) {
+              core.info(`Added Maintainer:\n${yaml.dump(added)}`);
+              core.setOutput("newMaintainers", added.map((obj) => obj.github).join(","));
+            }
+            if (removed.length > 0) {
+              core.setOutput("removedMaintainers", removed.map((obj) => obj.github).join(","));
+            }
+
+            core.info('Maintainers in main branch:\n' + yaml.dump(currentMaintainers));
+            core.info('Location of Maintainers in main branch:');
+            core.info(fs.realpathSync('./community-main/MAINTAINERS.yaml'));
+            core.info('Maintainers in PR branch:\n' + yaml.dump(previousMaintainers));
+            core.info('Location of Maintainers in PR branch:');
+            core.info(fs.realpathSync('./community/MAINTAINERS.yaml'));
+
+      - name: Debug newMaintainers output
+        run: |
+          echo "newMaintainers = $newMaintainers"
+    outputs:
+      newMaintainers: ${{ steps.compare-files.outputs.newMaintainers }}
+      removedMaintainers: ${{ steps.compare-files.outputs.removedMaintainers }}
+
+  add_maintainer:
+    needs: detect_maintainer_changes
+    if: needs.detect_maintainer_changes.outputs.newMaintainers != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Invite new maintainers to the organization
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ env.GH_TOKEN }}
+          script: |
+            const newMaintainers = '${{ needs.detect_maintainer_changes.outputs.newMaintainers }}'.split(',');
+            for (const maintainer of newMaintainers) {
+              try {
+                await github.request('PUT /orgs/{org}/memberships/{username}', {
+                  org: 'asyncapi',
+                  username: maintainer
+                });
+              } catch (error) {
+                console.error(`Failed to add ${maintainer} to the organization:`, error);
+              }
+            }
+
+      - name: Add new maintainers to the team
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ env.GH_TOKEN }}
+          script: |
+            const newMaintainers = '${{ needs.detect_maintainer_changes.outputs.newMaintainers }}'.split(',');
+            for (const maintainer of newMaintainers) {
+              try {
+                await github.request('PUT /orgs/{org}/teams/{team_slug}/memberships/{username}', {
+                  org: 'asyncapi',
+                  team_slug: 'maintainers',
+                  username: maintainer
+                });
+              } catch (error) {
+                console.error(`Failed to add ${maintainer} to the team:`, error);
+              }
+            }
+
+    outputs:
+      newMaintainers: ${{needs.detect_maintainer_changes.outputs.newMaintainers }}
+
+  display_message:
+    needs: add_maintainer
+    if: needs.add_maintainer.outputs.newMaintainers != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Display welcome message
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GH_TOKEN }}
+          script: |
+            const newMaintainers = "${{ needs.add_maintainer.outputs.newMaintainers }}".split(",");
+            const welcomeMessage = newMaintainers.map((maintainer) => `@${maintainer.trim().replace(/^@/, '')} I have invited you to join the AsyncAPI organization and you will soon be added to the team that lists all Maintainers.
+            We use this team to mention in different discussions in different places in GitHub where Maintainer's opinion is needed or even voting on some topic. Once Maintainers are mentioned:
+            - You get GitHub notification
+            - We also drop notification in our slack in #95_bot-maintainers-mentioned channel
+            - We drop an email to people that subscribed to Maintainer news here https://www.asyncapi.com/community/maintainers
+            Pick the channel for notifications that you prefer. Welcome aboard! We are excited to have you as part of the team.`).join("\n");
+            const { owner, repo } = context.repo;
+            const { number: issue_number } = context.issue;
+            return github.rest.issues.createComment({ owner, repo, issue_number, body: welcomeMessage });
+      - if: failure() # Only, on failure, send a message on the 94_bot-failing-ci slack channel
+        name: Report workflow run status to Slack
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{secrets.SLACK_CI_FAIL_NOTIFY}}
+          SLACK_TITLE: 🚨 Welcome new contributor action failed 🚨
+          SLACK_MESSAGE: Failed to post a message to new Maintainer
+          MSG_MINIMAL: true
+
+  remove_maintainer:
+    needs: detect_maintainer_changes
+    if: needs.detect_maintainer_changes.outputs.removedMaintainers != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove maintainers from the organization
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ env.GH_TOKEN }}
+          script: |
+            const removedMaintainers = '${{ needs.detect_maintainer_changes.outputs.removedMaintainers }}'.split(',');
+            for (const maintainer of removedMaintainers) {
+              try {
+                await github.request('DELETE /orgs/asyncapi/memberships/{username}', {
+                  username: maintainer
+                });
+                console.log(`Successfully removed ${maintainer} from the organization.`);
+              } catch (error) {
+                console.error(`Failed to remove ${maintainer} from the organization:`, error);
+              }
+            }
+
+      - name: Remove maintainers from the team
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ env.GH_TOKEN }}
+          script: |
+            const removedMaintainers = '${{ needs.detect_maintainer_changes.outputs.removedMaintainers }}'.split(',');
+            for (const maintainer of removedMaintainers) {
+              try {
+                await github.request('DELETE /orgs/asyncapi/teams/maintainers/memberships/{username}', {
+                  username: maintainer
+                });
+                console.log(`Successfully removed ${maintainer} from the team.`);
+              } catch (error) {
+                console.error(`Failed to remove ${maintainer} from the team:`, error);
+              }
+            }
+    outputs:
+      removedMaintainers: ${{ needs.welcome.outputs.removedMaintainers }}
+
+  update_emeritus:
+    needs: remove_maintainer
+    if: needs.detect_maintainer_changes.outputs.removedMaintainers != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v2
+
+      - name: Add maintainers to Emeritus.yaml and print
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ env.GH_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const path = './Emeritus.yaml';
+  
+            // Read the current content of the file
+            let content = fs.readFileSync(path, 'utf8').trim(); // remove any trailing whitespaces
+  
+            // Split the removed maintainers and prepare them for the yaml format
+            const removedMaintainers = "${{ needs.remove_maintainer.outputs.removedMaintainers }}".split(',').map(maintainer => `  - ${maintainer.trim()}`).join('\n');
+  
+            // Append the removed maintainers to the file content
+            content = content + '\n' + removedMaintainers;
+  
+            // Write the updated content back to the file
+            fs.writeFileSync(path, content);
+  
+            // Log the updated content to the console
+            console.log('Updated Emeritus.yaml:\n', content);
